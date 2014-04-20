@@ -1,0 +1,709 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model version="3.1.0">
+ <documentation>Simple model template for QP/C</documentation>
+ <framework name="qpc"/>
+ <package name="Events" stereotype="0x01">
+  <class name="MenuSelectEvt" superclass="qpc::QEvt">
+   <documentation>carries keypresses from USART RX ISR to GUI</documentation>
+   <attribute name="key" type="uint8_t" visibility="0x00" properties="0x00">
+    <documentation>A key pressed on the keyboard</documentation>
+   </attribute>
+  </class>
+ </package>
+ <package name="AOs" stereotype="0x02">
+  <class name="CLI" superclass="qpc::QActive">
+   <attribute name="blinkEvt" type="QTimeEvt" visibility="0x02" properties="0x00">
+    <documentation>one second periodic LED blink</documentation>
+   </attribute>
+   <attribute name="rollEvt" type="QTimeEvt" visibility="0x02" properties="0x00">
+    <documentation>Time event for outputting rollling stick on the screen</documentation>
+   </attribute>
+   <operation name="printMenuTitles" type="void" visibility="0x02" properties="0x00">
+    <parameter name="count" type="uint8_t"/>
+    <parameter name="menu" type="const char**"/>
+    <code> uint8_t i;
+ const char* const crlf=&quot;\r\n&quot;;
+
+    Console_printStr(/*(char*)*/crlf );
+
+    for( i=0; i&lt;=count; i++ ) {
+
+        Console_printNum(i, 10 );
+        Console_printStr(&quot;. &quot; );
+
+        if (i == 0) {
+          Console_printStr(&quot;Back&quot; );
+        }
+        else {
+            Console_printStr((char*)menu[i-1] );
+         }
+
+        Console_printStr((char*)crlf );
+    }
+
+
+    Console_printStr((char*)crlf );</code>
+   </operation>
+   <statechart>
+    <initial target="../1/2">
+     <action>/* Print banner on the serial console */
+
+    Console_printStr(&quot;\r\nStart\r\n&quot;);
+    Console_printStr(&quot;Compiled on &quot;);
+    Console_printStr(__DATE__);
+    Console_printStr(&quot; at &quot;);
+    Console_printStr(__TIME__);
+    Console_printStr(&quot; using Microchip XC16 ver.&quot;);
+    Console_printNum(__XC16_VERSION__, 10);
+
+    LED_ON();
+
+    QTimeEvt_postIn( &amp;me-&gt;blinkEvt, (QActive *)me, BLINK_ON_TIME );  </action>
+     <initial_glyph conn="16,10,5,0,16,6">
+      <action box="0,-2,10,2"/>
+     </initial_glyph>
+    </initial>
+    <state name="main">
+     <tran trig="BLINK">
+      <action>static bool on_off = false;
+
+uint8_t time;
+
+if( on_off == true ) {
+    LED_ON();
+    time = BLINK_ON_TIME;
+} else {
+    LED_OFF();
+    time = BLINK_OFF_TIME;
+}
+
+on_off = !on_off;
+QTimeEvt_postIn( &amp;me-&gt;blinkEvt, (QActive *)me, time );</action>
+      <tran_glyph conn="14,30,3,-1,10">
+       <action box="0,-2,10,2"/>
+      </tran_glyph>
+     </tran>
+     <tran trig="MENU_SELECT" target="../3">
+      <tran_glyph conn="14,42,3,3,15">
+       <action box="0,-2,10,2"/>
+      </tran_glyph>
+     </tran>
+     <state name="idle">
+      <entry>QTimeEvt_postEvery( &amp;me-&gt;rollEvt, (QActive *)me, ROLL_TIME );
+Console_printStr(&quot;\r\r\n\nPress any key to continue...&quot;);</entry>
+      <exit>QTimeEvt_disarm(&amp;me-&gt;rollEvt);</exit>
+      <tran trig="ROLL">
+       <action>Console_printRoll();</action>
+       <tran_glyph conn="20,24,3,-1,7">
+        <action box="0,-2,10,2"/>
+       </tran_glyph>
+      </tran>
+      <state_glyph node="20,16,16,11">
+       <entry box="1,2,6,2"/>
+       <exit box="1,4,6,2"/>
+      </state_glyph>
+     </state>
+     <state name="menu_Top">
+      <entry>Console_printStr(&quot;\r\nTop Menu\r\n&quot;);
+CLI_printMenuTitles((CLI*)me, MENU_MAIN_CNT, menuMain );</entry>
+      <state_glyph node="29,35,12,12">
+       <entry box="1,2,6,2"/>
+      </state_glyph>
+     </state>
+     <state_glyph node="14,12,77,54"/>
+    </state>
+    <state_diagram size="174,79"/>
+   </statechart>
+  </class>
+  <attribute name="AO_CLI" type="QActive* const" visibility="0x00" properties="0x00"/>
+  <operation name="CLI_ctor" type="void" visibility="0x00" properties="0x00">
+   <code>CLI* me = &amp;l_cli;
+
+QActive_ctor( &amp;me-&gt;super, Q_STATE_CAST( &amp;CLI_initial ));
+QTimeEvt_ctor( &amp;me-&gt;blinkEvt, BLINK_SIG );
+QTimeEvt_ctor( &amp;me-&gt;rollEvt, ROLL_SIG );</code>
+  </operation>
+ </package>
+ <package name="BSP" stereotype="0x00">
+  <operation name="Console_init" type="void" visibility="0x02" properties="0x00">
+   <documentation>Serial console on UART2</documentation>
+   <code> uint8_t tmpdata;
+
+   U2MODE = 0x0008;                                /* enable high baud rate */
+   U2STAbits.UTXISEL1 = 1;
+   U2BRG  = ((FCY / 4 / BAUD_RATE_CONSOLE) - 1);    /* baud rate generator */
+
+   _U2TXIP = 1; //serial interrupt priority
+   _U2RXIP = 1;
+   _U2ERIP = 1;
+   U2MODEbits.UARTEN = 1;    //UART then Tx - in that order!
+   U2STAbits.UTXEN   = 1;
+
+   tmpdata = U2RXREG;       //clear RX errors
+   U2STAbits.FERR = 0;
+   U2STAbits.OERR = 0;
+
+    //Set serial console pins
+    PPSUnLock;
+    PPSOutput( PPS_RP21, PPS_U2TX );    //hardcoded
+    PPSInput( PPS_U2RX, PPS_RP26 );     //todo - make less cryptic
+    //PPSOutput( CONSOLE_TX_PIN, PPS_U2TX );
+    //PPSInput( PPS_U2RX, CONSOLE_RX_PIN );
+
+    TRISGbits.TRISG7 = 1;    //set RX to input. todo - make less hardcoded
+
+    PPSLock;
+
+    ConsoleTx_Head = 0;
+    ConsoleTx_Tail = 0;
+
+    return;</code>
+  </operation>
+  <operation name="BSP_init" type="void" visibility="0x00" properties="0x00">
+   <documentation>Board initialization</documentation>
+   <code>    //REFOCONbits.ROEN = 1;   //output CPU clock for testing
+
+// PIC24FJ256GB206 doesn't have port A
+    TRISB = 0;
+    TRISC = 0;
+    TRISD = 0;
+    TRISE = 0;
+    TRISF = 0;
+    TRISG = 0;
+    //ODCBbits.ODB9 = 1;    //open-drain
+    PORTB = 0;
+    //VBUS_ON();
+    //AD1PCFGL = 0xffff;    //analog off
+
+// PIC24FJ256GB206 turns off analog differently
+    ANSB = 0;
+    ANSC = 0;
+    ANSD = 0;
+    //ANSE = 0;
+    ANSF = 0;
+    ANSG = 0;
+    //AD1PCFGbits.PCFG10 = 1;
+
+    //Set serial console pins
+    //PPSUnLock;
+    //PPSOutput(PPS_RP5, PPS_U2TX);
+    //PPSInput(PPS_U2RX, PPS_RP6);
+    //PPSLock;
+
+    Console_init();</code>
+  </operation>
+  <operation name="Console_printStr" type="void" visibility="0x00" properties="0x00">
+   <documentation>Places a string pointer into the console queue. Triggers ISR to re-read the queue
+if the queue was empty</documentation>
+   <parameter name="str" type="const char*"/>
+   <code> uint8_t tmphead = ConsoleTx_Head + 1;
+
+#if CONSOLE_TX_BUFMASK &lt; 255
+    tmphead &amp;= CONSOLE_TX_BUFMASK;
+#endif
+
+    while( tmphead == ConsoleTx_Tail ) {}     //this line blocks! return from the brackets
+
+    ConsoleTx_Buf[ tmphead ] = /*(const uint8_t*)*/str;
+
+    ConsoleTx_Head = tmphead;
+
+    if( _U2TXIE == 0) {    //trigger interrupt
+        _U2TXIF = 1;
+        _U2TXIE = 1;
+    }</code>
+  </operation>
+  <operation name="Console_printNum" type="void" visibility="0x00" properties="0x00">
+   <documentation>Creates a number from const strings and places it into the console queue
+Note1: this function can potentially place large number of elements into the queue.
+Size your queue accordingly
+Note 2: positive numbers only
+Note 3: max.base 16</documentation>
+   <parameter name="num" type="uint32_t"/>
+   <parameter name="base" type="uint8_t"/>
+   <code>#define CHAR_BUFSIZE 33
+ const char* const numchars[] = {&quot;0&quot;,&quot;1&quot;,&quot;2&quot;,&quot;3&quot;,&quot;4&quot;,&quot;5&quot;,&quot;6&quot;,&quot;7&quot;,&quot;8&quot;,&quot;9&quot;,&quot;A&quot;,&quot;B&quot;,&quot;C&quot;,&quot;D&quot;,&quot;E&quot;,&quot;F&quot;};
+ const char* buf[CHAR_BUFSIZE];
+ const char** pStr = &amp;(buf[CHAR_BUFSIZE-1]);
+
+    do {
+
+        *(--pStr) = numchars[num % base];
+
+        num /= base;
+    } while( num != 0 );
+
+    while( pStr &lt; &amp;buf[CHAR_BUFSIZE-1] ) {    //copy the buffer into the queue
+
+        Console_printStr( *pStr++ );
+    }</code>
+  </operation>
+  <operation name="Console_printRoll" type="void" visibility="0x00" properties="0x00">
+   <documentation>If called repeatedly, outputs BSD-style rotating symbol
+Note: the first symbol the function sends is a backspace which erases the
+previous symbol. If the previous symbol was a newline, some terminals will
+erase it before executing</documentation>
+   <code>#define IDX_MASK 3
+ const char* const rollchar[4] = {&quot;/&quot;,&quot;-&quot;,&quot;\\&quot;,&quot;|&quot;};
+ static uint8_t idx = 0;
+
+    Console_printStr(&quot;\x08&quot;);    //backspace
+
+    Console_printStr( rollchar[idx++] );
+
+    idx &amp;= IDX_MASK;</code>
+  </operation>
+  <operation name="Q_onAssert" type="void" visibility="0x00" properties="0x00">
+   <parameter name="file" type="char const Q_ROM * const Q_ROM_VAR"/>
+   <parameter name="line" type="int"/>
+   <code>    (void)file;                                   /* avoid compiler warning */
+    (void)line;                                   /* avoid compiler warning */
+    LED_ON();
+    QF_INT_DISABLE();             /* make sure that interrupts are disabled */
+    for (;;) {
+    }</code>
+  </operation>
+  <operation name="QF_onStartup" type="void" visibility="0x00" properties="0x00">
+   <code>    T2CON = 0x0000U;  /* Use Internal Osc (Fcy), 16 bit mode, prescaler = 1 */
+    TMR2  = 0x0000U; /* Start counting from 0 and clear the prescaler count */
+    PR2   = (uint16_t)(BSP_TMR2_PERIOD - 1U);              /* Timer2 period */
+    //_T2IP = TIMER2_ISR_PRIO;              /* set Timer 2 interrupt priority */
+    _T2IF = 0;                           /* clear the interrupt for Timer 2 */
+    _T2IE = 1;                              /* enable interrupt for Timer 2 */
+    T2CONbits.TON = 1;                                     /* start Timer 2 */
+
+    //do not enable console tx interrupt here!
+    _U2RXIF = 0;
+    _U2ERIF = 0;
+    _U2RXIE = 1;</code>
+  </operation>
+  <operation name="QF_onCleanup" type="void" visibility="0x00" properties="0x00">
+   <code>/* empty */</code>
+  </operation>
+  <operation name="QF_onIdle" type="void" visibility="0x00" properties="0x00">
+   <code>/* entered with interrupts disabled, NOTE01 */
+
+    /* NOTE: not enough LEDs on the Microstick II board to implement
+    *  the idle loop activity indicator ...
+    */
+    //LED_ON ();
+    //LED_OFF();
+
+#ifdef Q_SPY
+    QF_INT_ENABLE();                       /* enable interrupts, see NOTE01 */
+
+    while (U2STAbits.UTXBF == 0U) {                  /* TX Buffer not full? */
+        uint16_t b;
+
+        QF_INT_DISABLE();
+        b = QS_getByte();
+        QF_INT_ENABLE();
+
+        if (b == QS_EOD) {                          /* End-Of-Data reached? */
+            break;                                 /* break out of the loop */
+        }
+        U2TXREG = (uint8_t)b;   /* stick the byte to TXREG for transmission */
+    }
+#elif defined NDEBUG
+    __asm__ volatile(&quot;disi #0x0001&quot;);
+    Idle();                          /* transition to Idle mode, see NOTE02 */
+#else
+    QF_INT_ENABLE();                       /* enable interrupts, see NOTE01 */
+#endif</code>
+  </operation>
+  <operation name="QS_onStartup" type="uint8_t" visibility="0x00" properties="0x00">
+   <parameter name="arg" type="void const*"/>
+   <code> static uint8_t qsBuf[QS_BUF_SIZE];            /* buffer for Quantum Spy */
+
+    QS_initBuf(qsBuf, sizeof(qsBuf));     /* initialize the QS trace buffer */
+
+                 /* initialize the UART2 for transmitting the QS trace data */
+    RPOR5bits.RP11R = 5;                         /* Assign U2TX To Pin RP11 */
+    U2STA  = 0x0000U;                        /* use default settings of 8N1 */
+    U2MODE = 0x0008U;                              /* enable high baud rate */
+    U2BRG  = (uint16_t)((FCY_HZ / (4.0 * QS_BAUD_RATE)) - 1.0 + 0.5);
+    U2MODEbits.UARTEN = 1;
+    U2STAbits.UTXEN   = 1;
+                                                 /* setup the QS filters... */
+    QS_FILTER_ON(QS_ALL_RECORDS);
+
+//    QS_FILTER_OFF(QS_QEP_STATE_EMPTY);
+//    QS_FILTER_OFF(QS_QEP_STATE_ENTRY);
+//    QS_FILTER_OFF(QS_QEP_STATE_EXIT);
+//    QS_FILTER_OFF(QS_QEP_STATE_INIT);
+//    QS_FILTER_OFF(QS_QEP_INIT_TRAN);
+//    QS_FILTER_OFF(QS_QEP_INTERN_TRAN);
+//    QS_FILTER_OFF(QS_QEP_TRAN);
+//    QS_FILTER_OFF(QS_QEP_dummyD);
+
+    QS_FILTER_OFF(QS_QF_ACTIVE_ADD);
+    QS_FILTER_OFF(QS_QF_ACTIVE_REMOVE);
+    QS_FILTER_OFF(QS_QF_ACTIVE_SUBSCRIBE);
+    QS_FILTER_OFF(QS_QF_ACTIVE_UNSUBSCRIBE);
+    QS_FILTER_OFF(QS_QF_ACTIVE_POST_FIFO);
+    QS_FILTER_OFF(QS_QF_ACTIVE_POST_LIFO);
+    QS_FILTER_OFF(QS_QF_ACTIVE_GET);
+    QS_FILTER_OFF(QS_QF_ACTIVE_GET_LAST);
+    QS_FILTER_OFF(QS_QF_EQUEUE_INIT);
+    QS_FILTER_OFF(QS_QF_EQUEUE_POST_FIFO);
+    QS_FILTER_OFF(QS_QF_EQUEUE_POST_LIFO);
+    QS_FILTER_OFF(QS_QF_EQUEUE_GET);
+    QS_FILTER_OFF(QS_QF_EQUEUE_GET_LAST);
+    QS_FILTER_OFF(QS_QF_MPOOL_INIT);
+    QS_FILTER_OFF(QS_QF_MPOOL_GET);
+    QS_FILTER_OFF(QS_QF_MPOOL_PUT);
+    QS_FILTER_OFF(QS_QF_PUBLISH);
+    QS_FILTER_OFF(QS_QF_NEW);
+    QS_FILTER_OFF(QS_QF_GC_ATTEMPT);
+    QS_FILTER_OFF(QS_QF_GC);
+//    QS_FILTER_OFF(QS_QF_TICK);
+    QS_FILTER_OFF(QS_QF_TIMEEVT_ARM);
+    QS_FILTER_OFF(QS_QF_TIMEEVT_AUTO_DISARM);
+    QS_FILTER_OFF(QS_QF_TIMEEVT_DISARM_ATTEMPT);
+    QS_FILTER_OFF(QS_QF_TIMEEVT_DISARM);
+    QS_FILTER_OFF(QS_QF_TIMEEVT_REARM);
+    QS_FILTER_OFF(QS_QF_TIMEEVT_POST);
+    QS_FILTER_OFF(QS_QF_CRIT_ENTRY);
+    QS_FILTER_OFF(QS_QF_CRIT_EXIT);
+    QS_FILTER_OFF(QS_QF_ISR_ENTRY);
+    QS_FILTER_OFF(QS_QF_ISR_EXIT);
+
+    return (uint8_t)1;            /* indicate successfull QS initialization */
+</code>
+  </operation>
+  <operation name="QS_onCleanup" type="void" visibility="0x00" properties="0x00">
+   <code>/* empty */</code>
+  </operation>
+  <operation name="QS_onFlush" type="void" visibility="0x00" properties="0x00">
+   <code> uint16_t b;
+    while ((b = QS_getByte()) != QS_EOD) { /* next QS trace byte available? */
+        while (U2STAbits.UTXBF != 0U) {                  /* TX Buffer full? */
+        }
+        U2TXREG = (uint8_t)b;   /* stick the byte to TXREG for transmission */
+    }</code>
+  </operation>
+  <operation name="QS_onGetTime" type="QSTimeCtr" visibility="0x00" properties="0x00">
+   <code>    if (_T2IF == 0) {
+
+        return l_tickTime + (uint32_t)TMR2;
+
+    } else {
+
+        return l_tickTime + BSP_TMR2_PERIOD + (uint32_t)TMR2;
+    }</code>
+  </operation>
+ </package>
+ <package name="ISR" stereotype="0x00">
+  <operation name="_AddressError" type="void __attribute__((__interrupt__,__no_auto_psv__))" visibility="0x00" properties="0x00">
+   <documentation>Catches memory alignment error(s)</documentation>
+   <code>while(1);    //Address error</code>
+  </operation>
+  <operation name="_StackError" type="void __attribute__((__interrupt__,__no_auto_psv__))" visibility="0x00" properties="0x00">
+   <documentation>Catches stack error(s)</documentation>
+   <code>while(1);</code>
+  </operation>
+  <operation name="_T2Interrupt" type="void  __attribute__((__interrupt__, auto_psv))" visibility="0x00" properties="0x00">
+   <documentation>QF tick generator</documentation>
+   <code>    _T2IF = 0;                              /* clear Timer 2 interrupt flag */
+
+#ifdef Q_SPY
+    l_tickTime += BSP_TMR2_PERIOD;             /* account for TMR2 overflow */
+#endif
+
+QF_TICK(&amp;l_T2Interrupt);          /* handle all armed time events in QF */</code>
+  </operation>
+  <operation name="_U2RXInterrupt" type="void  __attribute__((__interrupt__, auto_psv))" visibility="0x00" properties="0x00">
+   <code>    //    U2STAbits.FERR = 0;
+    //    U2STAbits.OERR = 0;
+    while( U2STAbits.URXDA == 1 ) {
+        MenuSelectEvt* mse = Q_NEW(MenuSelectEvt, MENU_SELECT_SIG);
+        mse-&gt;key = U2RXREG;
+        QACTIVE_POST( AO_CLI, (QEvt*)mse, &amp;l_U2RXInterrupt );
+    }
+
+    _U2RXIF = 0;
+    //Input can be paced by disabling interrupt here and re-enabling in &amp;Console</code>
+  </operation>
+  <operation name="_U2TXInterrupt" type="void  __attribute__((__interrupt__, auto_psv))" visibility="0x00" properties="0x00">
+   <code>    while( U2STAbits.UTXBF == 0 ) {    //UART buffer available
+
+        if( *pPrintStr ) {             //previous string not completed
+            U2TXREG = *pPrintStr++;
+        }//if( *pPrintStr...
+        else {                         //get next string
+
+            if( ConsoleTx_Head != ConsoleTx_Tail ) {    //data available
+
+                ConsoleTx_Tail++;
+#if CONSOLE_TX_BUFMASK &lt; 255
+                ConsoleTx_Tail &amp;= CONSOLE_TX_BUFMASK;
+#endif //CONSOLE_TX_BUFMASK &lt; 255
+
+                pPrintStr = ConsoleTx_Buf[ ConsoleTx_Tail ];
+
+            }//if( ConsoleTx_Head != ConsoleTx_Tail...
+            else {    //queue empty
+
+                _U2TXIE = 0;    //disable interrupt
+                return;    //IF not cleaned - bug?
+            }
+        }//else - get next string
+    }//while( U2STAbits.UTXBF == 0...
+
+    _U2TXIF = 0;</code>
+  </operation>
+  <operation name="_U2ErrInterrupt" type="void  __attribute__((__interrupt__, auto_psv))" visibility="0x00" properties="0x00">
+   <code>_U2ERIF = 0;</code>
+  </operation>
+ </package>
+ <directory name=".">
+  <file name="cdb_minimal.c">
+   <text>#include &quot;qp_port.h&quot;
+#include &quot;cdb_minimal.h&quot;
+#include &quot;bsp.h&quot;
+
+
+static QEvt const* l_cliQueueSto[ 10 ];
+
+static QF_MPOOL_EL(MenuSelectEvt) l_smallPoolSto[ 10 ];
+
+
+int main(void) {
+
+    CLI_ctor();
+
+    QF_init();
+    BSP_init();
+
+    QF_poolInit( l_smallPoolSto, sizeof( l_smallPoolSto ), sizeof( l_smallPoolSto[0] ));
+
+    QActive_start( AO_CLI, 1, l_cliQueueSto, Q_DIM( l_cliQueueSto ), (void*)0, 0U, (QEvt*)0 );
+
+    return QF_run();
+}</text>
+  </file>
+  <file name="cdb_minimal.h">
+   <text>#ifndef a1tester_h
+#define a1tester_h
+
+//#include &quot;qp_port.h&quot;
+
+#include &lt;stdint.h&gt;
+#include &lt;stdbool.h&gt;
+#include &lt;p24FJ256GB206.h&gt;                /* header for PIC24F device in use */
+
+
+enum CdbMinimalSignals {
+    MENU_SELECT_SIG = Q_USER_SIG,
+    ROLL_SIG,
+    BLINK_SIG,
+    MAX_PUB_SIG,
+    MAX_SIG
+};
+
+
+#ifdef UNDEF
+
+enum CdbMinimalSignals {
+    BLINK_SIG = Q_USER_SIG,
+    ROLL_SIG,
+    MAX_PUB_SIG,
+    MAX_SIG
+};
+
+#endif    //UNDEF
+
+$declare(Events::MenuSelectEvt)
+
+
+$declare(AOs::CLI_ctor)
+
+
+$declare(AOs::AO_CLI)
+
+
+#endif    //cdb_minimal_h</text>
+  </file>
+  <file name="bsp.h">
+   <text>#ifndef bsp_h
+#define bsp_h
+
+#include &lt;stdint.h&gt;
+
+#define BSP_TICKS_PER_SEC    100U
+
+#define LED_ON()                (LATD |= (1U &lt;&lt; 2))
+#define LED_OFF()               (LATD &amp;= ~(1U &lt;&lt; 2))
+#define LED_TOGGLE()            (LATD ^= (1U &lt;&lt; 2))
+
+
+/* Public board-related functions */
+
+$declare(BSP::BSP_init)
+$declare(BSP::Console_printStr)
+$declare(BSP::Console_printNum)
+$declare(BSP::Console_printRoll)
+
+#endif</text>
+  </file>
+  <file name="bsp.c">
+   <text>#include &quot;qp_port.h&quot;
+#include &quot;bsp.h&quot;
+#include &quot;cdb_minimal.h&quot;
+
+#include &lt;pps.h&gt;
+
+Q_DEFINE_THIS_FILE
+
+
+/* MCU configuration bits */
+_CONFIG1
+(
+   JTAGEN_OFF     // JTAG Disabled
+   &amp; GCP_OFF      // Code Protect Disabled
+   &amp; GWRP_OFF     // Write Protect Disabled
+   &amp; FWDTEN_OFF   // Watchdog Timer Disabled
+   &amp; WINDIS_OFF   // Windowed Watchdog Timer Disabled
+)
+
+_CONFIG2
+(
+   IESO_ON          // Two Speed Start-up
+   //&amp; PLL96MHZ_ON    // 96MHz PLL Enabled
+   &amp; PLLDIV_DIV3    //input clock divided by 3 to get 4MHz
+   &amp; FNOSC_PRIPLL   //FNOSC_FRC //FNOSC_PRIPLL   //primary clock with PLL
+   &amp; POSCMOD_HS     //POSCMOD_NONE //POSCMOD_HS
+)
+_CONFIG3
+(
+  //SOSCSEL_IO
+  SOSCSEL_EC
+)
+//_CONFIG4
+//(
+//  RTCOSC_LPRC           //RTCC Source
+//)
+
+
+                                 /* frequency of the oscillator */
+#define FOSC_HZ                 32000000.0
+                                       /* instruction cycle clock frequency */
+#define FCY_HZ                  (FOSC_HZ / 2.0)
+
+#define FCY FCY_HZ
+
+#define BAUD_RATE_CONSOLE 115200UL
+//Console TX buffer - must be power of 2
+#define CONSOLE_TX_BUFSIZE 64
+#define CONSOLE_TX_BUFMASK ( CONSOLE_TX_BUFSIZE - 1 )
+
+#if ( CONSOLE_TX_BUFSIZE &amp; CONSOLE_TX_BUFMASK )
+#error Serial Tx Buffer size is not a power of 2
+#endif
+
+
+                 /* system clock tick period in CPU clocks / TMR2 prescaler */
+#define BSP_TMR2_PERIOD         ((uint16_t)(FCY_HZ / BSP_TICKS_PER_SEC))
+
+                                    /* controlling the LED on CDB port d.2 */
+
+#ifdef Q_SPY
+    static uint32_t l_tickTime;                        /* timestamp at tick */
+    static uint8_t const l_T2Interrupt = 0;
+
+    enum AppRecords {                 /* application-specific trace records */
+        A1_STAT = QS_USER
+    };
+
+#endif
+
+/* Variables */
+//Serial console
+const char* ConsoleTx_Buf[ CONSOLE_TX_BUFSIZE ];
+uint8_t ConsoleTx_Head;
+volatile uint8_t ConsoleTx_Tail;    //interrupt changes this
+static const char* pPrintStr;   //stores a string being output
+
+/* ISRs --------------------------------------------------------------------*/
+
+//NME
+
+$define(ISR::_AddressError)
+$define(ISR::_StackError)
+
+$define(ISR::_T2Interrupt)
+$define(ISR::_U2RXInterrupt)
+$define(ISR::_U2TXInterrupt)
+$define(ISR::_U2ErrInterrupt)
+
+/* Private functions */
+
+$define(BSP::Console_init)
+
+/* Public functions */
+
+$define(BSP::BSP_init)
+$define(BSP::Console_printStr)
+$define(BSP::Console_printNum)
+$define(BSP::Console_printRoll)
+
+/* QP support functions */
+
+$define(BSP::Q_onAssert)
+$define(BSP::QF_onStartup)
+$define(BSP::QF_onCleanup)
+$define(BSP::QF_onIdle)
+
+
+#ifdef Q_SPY
+
+#define QS_BUF_SIZE        1024
+#define QS_BAUD_RATE       38400.0
+
+/* QS functions */
+
+$define(BSP::QS_onStartup)
+$define(BSP::QS_onCleanup)
+$define(BSP::QS_onFlush)
+$define(BSP::QS_onGetTime)
+
+
+#endif                                                             /* Q_SPY */
+
+</text>
+  </file>
+  <file name="cli.c">
+   <text>#include &quot;qp_port.h&quot;
+#include &quot;cdb_minimal.h&quot;
+#include &quot;bsp.h&quot;
+
+Q_DEFINE_THIS_FILE
+
+/* Menus */
+
+const char* menuMain[]={&quot;Do Something&quot;, &quot;Do Something Else&quot;, &quot;Rest&quot;};
+#define MENU_MAIN_CNT Q_DIM(menuMain)
+
+
+$declare(AOs::CLI)
+
+static CLI l_cli;    //storage
+
+
+/* Time intervals for AO timers */
+#define BLINK_ON_TIME    2    //ticks
+#define BLINK_OFF_TIME   250
+
+#define ROLL_TIME 10
+
+
+QActive* const AO_CLI = &amp;l_cli.super;    /* Opaque AO pointer */
+
+$define(AOs::CLI_ctor)
+$define(AOs::CLI)</text>
+  </file>
+  <file name="README.md">
+   <text>This code is not useful and may not compile, placed for visibility to the CDB developers</text>
+  </file>
+ </directory>
+</model>
